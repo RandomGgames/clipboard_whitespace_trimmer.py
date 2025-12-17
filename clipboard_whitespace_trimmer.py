@@ -1,28 +1,33 @@
 import datetime
 import logging
+import os
 import pathlib
 import pyperclip
 import socket
 import sys
+import threading
 import time
 import toml
 import traceback
 import typing
 from datetime import datetime
+from PIL import Image
+from pystray import Icon, MenuItem, Menu
 
 logger = logging.getLogger(__name__)
 
 """
-Python Script Template
+Clipboard Whitespace Trimmer
 
-Template includes:
-- Configurable logging via config file
-- Script run time at the end of execution
-- Error handling and cleanup
-- Total folder size log retention
+- Removes leading and trailing whitespace from clipboard content
+- Optionally removes custom characters
+- Creates a system tray icon for easy access
 """
 
-__version__ = "1.0.4"  # Major.Minor.Patch
+__version__ = "1.0.5"  # Major.Minor.Patch
+
+
+exit_event = threading.Event()
 
 
 def read_toml(file_path: typing.Union[str, pathlib.Path]) -> dict:
@@ -57,7 +62,48 @@ def trim_whitespaces(text: str, unwanted_characters: list) -> str:
     return cleaned
 
 
+def load_image(path) -> Image.Image:
+    image = Image.open(path)
+    logger.debug(f'Loaded image at path "{path}"')
+    return image
+
+
+# def open_source_url(icon, item):
+#     webbrowser.open("https://github.com/RandomGgames/Window-Centerer")
+#     logger.debug('Opened source URL.')
+
+
+def open_script_folder(icon, item):
+    folder_path = os.path.dirname(os.path.abspath(__file__))
+    os.startfile(folder_path)
+    logger.debug(f'Opened script folder: {folder_path}')
+
+
+def on_exit(icon, item):
+    logger.debug(f'Exit pressed on system tray icon')
+    icon.stop()
+    logger.debug('System tray icon stopped.')
+    exit_event.set()
+    logger.debug(f'exit event triggered')
+
+
+def startup_tray_icon():
+    logger.debug(f'Starting up system tray icon')
+    image = load_image('system_tray_icon.png')
+    menu = Menu(
+        # MenuItem('Source', open_source_url),
+        MenuItem('Open Folder', open_script_folder),
+        MenuItem('Exit', on_exit)
+    )
+    icon = Icon('CenterWindowScript', image, menu=menu)
+    logger.debug(f'Started system tray icon')
+    icon.run()
+
+
 def main():
+    system_tray_thread = threading.Thread(target=startup_tray_icon, daemon=True)
+    system_tray_thread.start()
+
     previous_clipboard_text = ''
     unwanted_characters = config.get("unwanted_characters", [])
 
