@@ -24,7 +24,7 @@ Clipboard Whitespace Trimmer
 - Creates a system tray icon for easy access
 """
 
-__version__ = "1.0.5"  # Major.Minor.Patch
+__version__ = "1.0.6"  # Major.Minor.Patch
 
 
 exit_event = threading.Event()
@@ -298,5 +298,4 @@ if __name__ == "__main__":
         for handler in logger.handlers:
             handler.close()
         logger.handlers.clear()
-        input("Press Enter to exit...")
         sys.exit(error)
