@@ -24,7 +24,7 @@ Clipboard Whitespace Trimmer
 - Creates a system tray icon for easy access
 """
 
-__version__ = "1.0.6"  # Major.Minor.Patch
+__version__ = "1.0.7"  # Major.Minor.Patch
 
 
 exit_event = threading.Event()
@@ -76,7 +76,7 @@ def load_image(path) -> Image.Image:
 def open_script_folder(icon, item):
     folder_path = os.path.dirname(os.path.abspath(__file__))
     os.startfile(folder_path)
-    logger.debug(f'Opened script folder: {folder_path}')
+    logger.debug(f'Opened script folder: "{folder_path}"')
 
 
 def on_exit(icon, item):
@@ -133,13 +133,13 @@ def main():
             )
 
             if candidate_cleaned != current_clipboard_text:
-                logger.info(f'Extra white spaces detected in {repr(current_clipboard_text)}')
+                logger.info(f'Extra white spaces detected in "{str(current_clipboard_text)}"')
                 cleaned_text = trim_whitespaces(current_clipboard_text, unwanted_characters)
                 pyperclip.copy(cleaned_text)
-                logger.info(f'Clipboard updated to {repr(cleaned_text)}')
+                logger.info(f'Clipboard updated to "{str(cleaned_text)}"')
                 previous_clipboard_text = cleaned_text
             else:
-                logger.info(f'No extra white spaces detected in {repr(current_clipboard_text)}')
+                logger.info(f'No extra white spaces detected in "{str(current_clipboard_text)}"')
                 previous_clipboard_text = current_clipboard_text
 
         except pyperclip.PyperclipException as e:
