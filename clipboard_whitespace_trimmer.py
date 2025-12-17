@@ -22,7 +22,7 @@ Template includes:
 - Total folder size log retention
 """
 
-__version__ = "1.0.3"  # Major.Minor.Patch
+__version__ = "1.0.4"  # Major.Minor.Patch
 
 
 def read_toml(file_path: typing.Union[str, pathlib.Path]) -> dict:
