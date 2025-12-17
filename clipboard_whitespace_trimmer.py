@@ -36,39 +36,73 @@ def read_toml(file_path: typing.Union[str, pathlib.Path]) -> dict:
     return config
 
 
-def remove_spaces_tabs(text: str, unwanted_characters: list):
-    logger.debug(f'Removing leading and trailing white spaces from text...')
-    while text[0] in unwanted_characters:
-        text = text[1:]
-    while text[-1] in unwanted_characters:
-        text = text[:-1]
-    logger.debug(f'Removed leading and trailing white spaces.')
-    return text
+def trim_whitespaces(text: str, unwanted_characters: list) -> str:
+    """
+    Use str.strip for trimming. If custom characters are provided,
+    build a character string for strip; otherwise trim all Unicode whitespace.
+    """
+    logger.debug('Trimming...')
+    if not text:
+        logger.debug('Input text is empty. Nothing to trim.')
+        return text
+
+    if not unwanted_characters:
+        # Trim all Unicode whitespace
+        cleaned = text.strip()
+    else:
+        # str.strip accepts a string of characters to trim
+        chars = ''.join(unwanted_characters)
+        cleaned = text.strip(chars)
+
+    return cleaned
 
 
 def main():
     previous_clipboard_text = ''
-
     unwanted_characters = config.get("unwanted_characters", [])
 
+    # Precompute the strip characters string for detection efficiency
+    strip_chars = ''.join(unwanted_characters) if unwanted_characters else None
+
+    # Polling loop
     while True:
         try:
             current_clipboard_text = pyperclip.paste()
 
-            if current_clipboard_text != '' and current_clipboard_text != previous_clipboard_text:
-                if current_clipboard_text[0] in unwanted_characters or current_clipboard_text[-1] in unwanted_characters:
-                    logger.info(f'Extra white spaces detected in {repr(current_clipboard_text)}')
-                    cleaned_text = remove_spaces_tabs(current_clipboard_text, unwanted_characters)
-                    pyperclip.copy(cleaned_text)
-                    logger.info(f'Clipboard updated to {repr(cleaned_text)}')
-                    previous_clipboard_text = cleaned_text
-                else:
-                    logger.info(f'No extra white spaces detected in {repr(current_clipboard_text)}')
-                    previous_clipboard_text = current_clipboard_text
+            # Skip empty reads
+            if not current_clipboard_text:
+                time.sleep(0.1)
+                continue
+
+            # Skip unchanged content
+            if current_clipboard_text == previous_clipboard_text:
+                time.sleep(0.1)
+                continue
+
+            # Detection using strip rather than indexing ends
+            candidate_cleaned = (
+                current_clipboard_text.strip()
+                if strip_chars is None
+                else current_clipboard_text.strip(strip_chars)
+            )
+
+            if candidate_cleaned != current_clipboard_text:
+                logger.info(f'Extra white spaces detected in {repr(current_clipboard_text)}')
+                cleaned_text = trim_whitespaces(current_clipboard_text, unwanted_characters)
+                pyperclip.copy(cleaned_text)
+                logger.info(f'Clipboard updated to {repr(cleaned_text)}')
+                previous_clipboard_text = cleaned_text
+            else:
+                logger.info(f'No extra white spaces detected in {repr(current_clipboard_text)}')
+                previous_clipboard_text = current_clipboard_text
+
+        except pyperclip.PyperclipException as e:
+            logger.exception(f'Clipboard access error: {repr(e)}')
         except Exception as e:
             logger.exception(f'An error occurred due to {repr(e)}')
 
-        time.sleep(100 / 1000)
+        # Debounce
+        time.sleep(0.1)
 
 
 def format_duration_long(duration_seconds: float) -> str:
