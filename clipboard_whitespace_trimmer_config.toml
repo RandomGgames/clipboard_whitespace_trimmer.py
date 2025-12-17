@@ -1,4 +1,4 @@
-unwanted_characters = ['\t', '\r', '\n', ' ']
+unwanted_characters = ["\t", "\r", "\n", " "]
 
 [logging]
 console_logging_level = "DEBUG"                                                          # DEBUG, INFO, WARNING, ERROR

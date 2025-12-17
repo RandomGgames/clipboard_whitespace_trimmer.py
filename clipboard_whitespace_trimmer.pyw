@@ -24,7 +24,7 @@ Clipboard Whitespace Trimmer
 - Creates a system tray icon for easy access
 """
 
-__version__ = "1.0.7"  # Major.Minor.Patch
+__version__ = "1.0.8"  # Major.Minor.Patch
 
 
 exit_event = threading.Event()
@@ -43,23 +43,29 @@ def read_toml(file_path: typing.Union[str, pathlib.Path]) -> dict:
 
 def trim_whitespaces(text: str, unwanted_characters: list) -> str:
     """
-    Use str.strip for trimming. If custom characters are provided,
-    build a character string for strip; otherwise trim all Unicode whitespace.
+    Trim leading and trailing characters. When `unwanted_characters` is falsy,
+    use str.strip() to remove all Unicode whitespace.
     """
-    logger.debug('Trimming...')
+    logger.debug(f'Trimming {repr(text)}')
+
+    # Fast path: empty text
     if not text:
         logger.debug('Input text is empty. Nothing to trim.')
         return text
 
-    if not unwanted_characters:
-        # Trim all Unicode whitespace
-        cleaned = text.strip()
-    else:
-        # str.strip accepts a string of characters to trim
-        chars = ''.join(unwanted_characters)
-        cleaned = text.strip(chars)
+    # Trim from the left with emptiness guard
+    while text and text[0] in unwanted_characters:
+        logger.debug(f'Removing leading character {repr(text[0])}')
+        text = text[1:]
+        logger.debug(f'Result: {repr(text)}')
 
-    return cleaned
+    # Trim from the right with emptiness guard
+    while text and text[-1] in unwanted_characters:
+        logger.debug(f'Removing trailing character {repr(text[-1])}')
+        text = text[:-1]
+        logger.debug(f'Result: {repr(text)}')
+
+    return text
 
 
 def load_image(path) -> Image.Image:
@@ -104,13 +110,10 @@ def main():
     system_tray_thread = threading.Thread(target=startup_tray_icon, daemon=True)
     system_tray_thread.start()
 
-    previous_clipboard_text = ''
     unwanted_characters = config.get("unwanted_characters", [])
+    logger.debug(f'Unwanted characters: {(unwanted_characters)}')
 
-    # Precompute the strip characters string for detection efficiency
-    strip_chars = ''.join(unwanted_characters) if unwanted_characters else None
-
-    # Polling loop
+    previous_clipboard_text = None
     while True:
         try:
             current_clipboard_text = pyperclip.paste()
@@ -125,22 +128,14 @@ def main():
                 time.sleep(0.1)
                 continue
 
-            # Detection using strip rather than indexing ends
-            candidate_cleaned = (
-                current_clipboard_text.strip()
-                if strip_chars is None
-                else current_clipboard_text.strip(strip_chars)
-            )
-
-            if candidate_cleaned != current_clipboard_text:
-                logger.info(f'Extra white spaces detected in "{str(current_clipboard_text)}"')
+            # Detect if any of the unwanted characters are present at the beginning or end of current_clipboard_text
+            if current_clipboard_text[0] in unwanted_characters or current_clipboard_text[-1] in unwanted_characters:
+                logger.info(f'Extra white spaces detected in {repr(current_clipboard_text)}')
                 cleaned_text = trim_whitespaces(current_clipboard_text, unwanted_characters)
                 pyperclip.copy(cleaned_text)
                 logger.info(f'Clipboard updated to "{str(cleaned_text)}"')
                 previous_clipboard_text = cleaned_text
-            else:
-                logger.info(f'No extra white spaces detected in "{str(current_clipboard_text)}"')
-                previous_clipboard_text = current_clipboard_text
+                continue
 
         except pyperclip.PyperclipException as e:
             logger.exception(f'Clipboard access error: {repr(e)}')
