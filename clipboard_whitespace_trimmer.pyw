@@ -6,24 +6,73 @@ Clipboard Whitespace Trimmer
 - Creates a system tray icon for easy access
 """
 
+import ctypes
 import datetime
 import json
 import logging
 import os
-import pyperclip
 import socket
 import sys
 import threading
 import time
 import tomllib
+from ctypes import wintypes
 from datetime import datetime
 from pathlib import Path
+from typing import Any
+
 from PIL import Image
 from pystray import Icon, MenuItem, Menu
 
 logger = logging.getLogger(__name__)
 
 __version__ = "1.0.9"  # Major.Minor.Patch
+
+user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
+
+# user32
+user32.OpenClipboard.argtypes = [wintypes.HWND]
+user32.OpenClipboard.restype = wintypes.BOOL
+
+user32.CloseClipboard.argtypes = []
+user32.CloseClipboard.restype = wintypes.BOOL
+
+user32.EnumClipboardFormats.argtypes = [wintypes.UINT]
+user32.EnumClipboardFormats.restype = wintypes.UINT
+
+user32.GetClipboardData.argtypes = [wintypes.UINT]
+user32.GetClipboardData.restype = wintypes.HANDLE
+
+# kernel32
+kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+kernel32.GlobalLock.restype = wintypes.LPVOID
+
+kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+kernel32.GlobalUnlock.restype = wintypes.BOOL
+
+kernel32.GlobalSize.argtypes = [wintypes.HGLOBAL]
+kernel32.GlobalSize.restype = ctypes.c_size_t
+
+
+# Function signatures
+user32.OpenClipboard.argtypes = [wintypes.HWND]
+user32.OpenClipboard.restype = wintypes.BOOL
+user32.EmptyClipboard.argtypes = []
+user32.EmptyClipboard.restype = wintypes.BOOL
+user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+user32.SetClipboardData.restype = wintypes.HANDLE
+user32.CloseClipboard.argtypes = []
+user32.CloseClipboard.restype = wintypes.BOOL
+
+kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+kernel32.GlobalLock.restype = wintypes.LPVOID
+kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+kernel32.GlobalUnlock.restype = wintypes.BOOL
+
+GMEM_MOVEABLE = 0x0002
 
 
 exit_event = threading.Event()
@@ -98,13 +147,13 @@ def load_image(path: Path | str) -> Image.Image:
 #     logger.debug("Opened source URL.")
 
 
-def open_script_folder(icon, item):
+def open_script_folder():
     folder_path = os.path.dirname(os.path.abspath(__file__))
     os.startfile(folder_path)
     logger.debug(f"Opened script folder: {json.dumps(str(folder_path))}")
 
 
-def on_exit(icon, item):
+def on_exit(icon):
     logger.debug("Exit pressed on system tray icon")
     icon.stop()
     logger.debug("System tray icon stopped.")
@@ -125,43 +174,316 @@ def startup_tray_icon():
     icon.run()
 
 
+def open_clipboard_with_retry(retries: int = 5, delay: float = 0.02) -> bool:
+    """
+    Attempt to open the clipboard with retries.
+    Returns True if successful, False otherwise.
+    """
+    for _ in range(retries):
+        if user32.OpenClipboard(None):
+            return True
+        time.sleep(delay)
+    return False
+
+
+def get_clipboard_all_data() -> dict[int, str | bytes]:
+    """
+    Return all clipboard formats as {format_id: data}.
+    Text formats are decoded to str.
+    All other formats are raw bytes.
+    """
+    CF_TEXT = 1
+    CF_UNICODETEXT = 13
+
+    clipboard_data: dict[int, str | bytes] = {}
+
+    if not open_clipboard_with_retry():
+        logger.debug("Clipboard is busy; skipping this cycle")
+        return clipboard_data
+
+    try:
+        fmt = 0
+        while True:
+            fmt = user32.EnumClipboardFormats(fmt)
+            if fmt == 0:
+                break
+
+            handle = user32.GetClipboardData(fmt)
+            if not handle:
+                continue
+
+            ptr = kernel32.GlobalLock(handle)
+            if not ptr:
+                continue
+
+            try:
+                size = kernel32.GlobalSize(handle)
+                raw = ctypes.string_at(ptr, size)
+
+                if fmt == CF_UNICODETEXT:
+                    text = raw.decode("utf-16le", errors="replace").rstrip("\x00")
+                    clipboard_data[fmt] = normalize_unicode_text(text)
+
+                elif fmt == CF_TEXT:
+                    codepage = ctypes.windll.kernel32.GetACP()
+                    clipboard_data[fmt] = (
+                        raw.split(b"\x00", 1)[0]
+                        .decode(f"cp{codepage}", errors="replace")
+                    )
+
+                else:
+                    clipboard_data[fmt] = raw
+
+            finally:
+                kernel32.GlobalUnlock(handle)
+
+    finally:
+        user32.CloseClipboard()
+
+    return clipboard_data
+
+
+def normalize_unicode_text(text: str) -> str:
+    """
+    Normalize CF_UNICODETEXT coming from the clipboard.
+
+    Excel (and some other apps) prepend CR/LF even when the cell has
+    no visible leading newline. Remove only leading newlines.
+    """
+    return text.lstrip("\r\n")
+
+
+def write_json_file(data: dict | list, file_path: Path | str) -> None:
+    """
+    Writes a dictionary or list to a json file. Includes error checking and logging.
+
+    Args:
+    data (dict | list): The data to write to the json file.
+    file_path (Path | str): The file path of the json file to write.
+
+    Returns:
+    None
+    """
+    try:
+        file_path = Path(file_path)
+        if not file_path.parent.exists():
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            logger.debug(f"Created folder: {json.dumps(str(file_path.parent))}")
+        with open(file_path, "w", encoding="utf-8") as file:
+            json.dump(data, file, indent=4)
+            logger.info(f"Successfully wrote json file: {json.dumps(str(file_path))}")
+    except IOError:
+        logger.error(f"Error writing json file: {json.dumps(str(file_path))}")
+        raise
+
+
+def json_safe_clipboard(data: dict[int, str | bytes]) -> dict[str, Any]:
+    """
+    Convert clipboard data into JSON-serializable form.
+    Bytes are stored as their Python repr (e.g. b'\\x00\\xff').
+    """
+    safe: dict[str, Any] = {}
+
+    for fmt, value in data.items():
+        key = str(fmt)
+
+        if isinstance(value, bytes):
+            safe[key] = repr(value)
+        else:
+            safe[key] = value
+
+    return safe
+
+
+def trim_clipboard_text(text: str, unwanted_characters=None) -> str:
+    """
+    Trim leading and trailing characters from clipboard text.
+    By default, removes: tab, carriage return, newline, space.
+    """
+    if unwanted_characters is None:
+        unwanted_characters = ["\t", "\r", "\n", " "]
+
+    # Trim only leading/trailing chars
+    start = 0
+    end = len(text)
+
+    while start < end and text[start] in unwanted_characters:
+        start += 1
+    while end > start and text[end - 1] in unwanted_characters:
+        end -= 1
+
+    return text[start:end]
+
+
+def replace_clipboard_with_trimmed_text():
+    """
+    Open the clipboard, read all formats, trim text formats, then
+    write back all formats (text trimmed, everything else untouched).
+    """
+    CF_TEXT = 1
+    CF_UNICODETEXT = 13
+
+    if not open_clipboard_with_retry():
+        logger.debug("Clipboard busy, cannot update")
+        return False
+
+    try:
+        # Read all clipboard formats
+        formats = {}
+        fmt = 0
+        while True:
+            fmt = user32.EnumClipboardFormats(fmt)
+            if fmt == 0:
+                break
+
+            handle = user32.GetClipboardData(fmt)
+            if not handle:
+                continue
+
+            ptr = kernel32.GlobalLock(handle)
+            if not ptr:
+                continue
+
+            try:
+                size = kernel32.GlobalSize(handle)
+                raw = ctypes.string_at(ptr, size)
+
+                # Decode text formats, trim, re-encode
+                if fmt == CF_UNICODETEXT:
+                    text = raw.decode("utf-16le", errors="replace").rstrip("\x00")
+                    trimmed = trim_clipboard_text(text)
+                    formats[fmt] = (trimmed + "\x00").encode("utf-16le")
+
+                elif fmt == CF_TEXT:
+                    codepage = ctypes.windll.kernel32.GetACP()
+                    text = raw.split(b"\x00", 1)[0].decode(f"cp{codepage}", errors="replace")
+                    trimmed = trim_clipboard_text(text)
+                    formats[fmt] = trimmed.encode(f"cp{codepage}") + b"\x00"
+
+                else:
+                    # Keep raw bytes untouched
+                    formats[fmt] = raw
+
+            finally:
+                kernel32.GlobalUnlock(handle)
+
+        # Now write back all formats
+        user32.EmptyClipboard()
+        for fmt, data in formats.items():
+            hGlobal = kernel32.GlobalAlloc(0x2000, len(data))  # GMEM_MOVEABLE
+            ptr = kernel32.GlobalLock(hGlobal)
+            ctypes.memmove(ptr, data, len(data))
+            kernel32.GlobalUnlock(hGlobal)
+            user32.SetClipboardData(fmt, hGlobal)
+
+        logger.debug("Clipboard text trimmed and replaced successfully")
+        return True
+
+    finally:
+        user32.CloseClipboard()
+
+
+def trim_clipboard_text_formats(clipboard: dict[int, str | bytes], unwanted_characters: list[str]) -> dict[int, str | bytes]:
+    """
+    Trim leading/trailing unwanted characters for specific text formats using match-case.
+    Other formats are left untouched.
+    """
+    new_clipboard = {}
+    unwanted_set = set(unwanted_characters)
+
+    for fmt, value in clipboard.items():
+        match fmt:
+            case 1 | 13 | 7:  # CF_TEXT, CF_UNICODETEXT, legacy RTF/text
+                if isinstance(value, str):
+                    # Trim leading
+                    start = 0
+                    while start < len(value) and value[start] in unwanted_set:
+                        start += 1
+                    # Trim trailing
+                    end = len(value)
+                    while end > start and value[end - 1] in unwanted_set:
+                        end -= 1
+                    new_clipboard[fmt] = value[start:end]
+                else:
+                    new_clipboard[fmt] = value
+            case _:  # all other formats
+                new_clipboard[fmt] = value
+
+    return new_clipboard
+
+
+def set_clipboard_data(clipboard_data: dict[int, str | bytes]) -> None:
+    """
+    Set multiple formats to the Windows clipboard.
+    Text is automatically encoded if needed; bytes are written as-is.
+    """
+    if not user32.OpenClipboard(None):
+        raise RuntimeError("Cannot open clipboard")
+
+    try:
+        user32.EmptyClipboard()
+
+        for fmt, value in clipboard_data.items():
+            # Determine the data type to write
+            if isinstance(value, str):
+                # Convert string to bytes depending on format
+                if fmt == 13:  # CF_UNICODETEXT
+                    data_bytes = (value + "\x00").encode("utf-16le")
+                elif fmt == 1:  # CF_TEXT
+                    data_bytes = (value + "\x00").encode("mbcs")
+                else:
+                    data_bytes = (value + "\x00").encode("utf-8")
+            else:
+                data_bytes = value
+
+            # Allocate global memory
+            h_global = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data_bytes))
+            if not h_global:
+                raise MemoryError("Failed to allocate global memory for clipboard")
+
+            ptr = kernel32.GlobalLock(h_global)
+            if not ptr:
+                raise MemoryError("Failed to lock global memory for clipboard")
+
+            try:
+                ctypes.memmove(ptr, data_bytes, len(data_bytes))
+            finally:
+                kernel32.GlobalUnlock(h_global)
+
+            if not user32.SetClipboardData(fmt, h_global):
+                raise RuntimeError(f"Failed to set clipboard format {fmt}")
+
+    finally:
+        user32.CloseClipboard()
+
+
 def main():
     system_tray_thread = threading.Thread(target=startup_tray_icon, daemon=True)
     system_tray_thread.start()
 
     unwanted_characters = config.get("unwanted_characters", [])
-    logger.debug(f"Unwanted characters: {(unwanted_characters)}")
+    logger.debug(f"Unwanted characters: {unwanted_characters}")
 
-    previous_clipboard_text = None
+    previous_clipboard = None
+
     while not exit_event.is_set():
-        try:
-            current_clipboard_text = pyperclip.paste()
+        clipboard = get_clipboard_all_data()
+        if not clipboard:
+            time.sleep(0.5)
+            # logger.debug("Clipboard is empty; skipping this cycle")
+            continue
 
-            if not current_clipboard_text:
-                time.sleep(0.1)
-                continue
+        if previous_clipboard == clipboard:
+            # logger.debug("Clipboard data has not changed; skipping this cycle")
+            time.sleep(0.5)
+            continue
 
-            if current_clipboard_text == previous_clipboard_text:
-                time.sleep(0.1)
-                continue
+        cleaned_clipboard = trim_clipboard_text_formats(clipboard, unwanted_characters)
+        set_clipboard_data(cleaned_clipboard)
 
-            cleaned_text = trim_whitespaces(current_clipboard_text, unwanted_characters)
+        previous_clipboard = clipboard
 
-            # Only modify clipboard if the text actually changed
-            if cleaned_text != current_clipboard_text:
-                logger.info(f"Extra whitespace detected in {repr(current_clipboard_text)}")
-                time.sleep(0.05)  # allow Excel to finish writing
-                pyperclip.copy(cleaned_text)
-                logger.info(f"Clipboard updated to {json.dumps(str(cleaned_text))}")
-                previous_clipboard_text = cleaned_text
-                continue
-
-        except pyperclip.PyperclipException as e:
-            logger.exception(f"Clipboard access error: {repr(e)}")
-        except Exception as e:
-            logger.exception(f"An error occurred due to {repr(e)}")
-
-        time.sleep(0.1)
+        time.sleep(0.5)
 
 
 def format_duration_long(duration_seconds: float) -> str:
