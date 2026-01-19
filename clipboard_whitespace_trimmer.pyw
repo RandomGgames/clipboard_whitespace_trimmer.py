@@ -17,10 +17,10 @@ import time
 import tomllib
 from datetime import datetime
 from pathlib import Path
-from PIL import Image
-from pystray import Icon, MenuItem, Menu
 
 import pyperclip
+from PIL import Image
+from pystray import Icon, MenuItem, Menu
 
 logger = logging.getLogger(__name__)
 
