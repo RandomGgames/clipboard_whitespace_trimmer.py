@@ -24,7 +24,7 @@ from pystray import Icon, MenuItem, Menu
 
 logger = logging.getLogger(__name__)
 
-__version__ = "1.0.8"  # Major.Minor.Patch
+__version__ = "1.0.9"  # Major.Minor.Patch
 
 exit_event = threading.Event()
 
@@ -126,39 +126,37 @@ def main():
     system_tray_thread.start()
 
     unwanted_characters = CONFIG.get("unwanted_characters", [])
-    logger.debug(f"Unwanted characters: {(unwanted_characters)}")
+    logger.debug(f"Unwanted characters: {unwanted_characters}")
 
     previous_clipboard_text = None
+
     while not exit_event.is_set():
         try:
             current_clipboard_text = pyperclip.paste()
 
-            # Skip empty reads
             if not current_clipboard_text:
                 time.sleep(0.1)
                 continue
 
-            # Skip unchanged content
             if current_clipboard_text == previous_clipboard_text:
                 time.sleep(0.1)
                 continue
 
-            # Detect if any of the unwanted characters are present at the beginning or end of current_clipboard_text
-            if current_clipboard_text[0] in unwanted_characters or current_clipboard_text[-1] in unwanted_characters:
-                logger.info(f"Extra white spaces detected in {json.dumps(str(current_clipboard_text))}")
+            if (current_clipboard_text[0] in unwanted_characters or current_clipboard_text[-1] in unwanted_characters):
+                logger.debug("Unwanted chracters detected in clipboard text...")
                 cleaned_text = trim_whitespaces(current_clipboard_text, unwanted_characters)
                 pyperclip.copy(cleaned_text)
-                logger.info(f"Clipboard updated to {json.dumps(str(cleaned_text))}")
+                logger.debug("Clipboard updated.")
                 previous_clipboard_text = cleaned_text
-                continue
 
         except pyperclip.PyperclipException:
             logger.exception("Clipboard access error")
-        except Exception:  # pylint: disable=broad-except
+        except Exception:
             logger.exception("An unknown error occurred")
 
-        # Debounce
         time.sleep(0.1)
+
+    logger.info("Exit event received. Shutting down main loop.")
 
 
 def format_duration_long(duration_seconds: float) -> str:
