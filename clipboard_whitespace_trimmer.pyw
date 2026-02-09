@@ -323,14 +323,9 @@ def bootstrap():
         pause_before_exit = exit_behavior_config.get("always_pause", False)
         pause_before_exit_on_error = exit_behavior_config.get("pause_on_error", True)
 
-        start_ns = time.perf_counter_ns()
         logger.info(f"Script: {json.dumps(script_name)} | Version: {__version__} | Host: {json.dumps(pc_name)}")
 
         main()
-
-        end_ns = time.perf_counter_ns()
-        duration_str = format_duration_long((end_ns - start_ns) / 1e9)
-        logger.info(f"Execution completed in {duration_str}.")
 
     except KeyboardInterrupt:
         logger.warning("Operation interrupted by user.")
