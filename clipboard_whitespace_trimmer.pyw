@@ -129,7 +129,7 @@ def main():
     logger.debug(f"Unwanted characters: {(unwanted_characters)}")
 
     previous_clipboard_text = None
-    while True:
+    while not exit_event.is_set():
         try:
             current_clipboard_text = pyperclip.paste()
 
