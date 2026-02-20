@@ -10,76 +10,26 @@ import datetime
 import json
 import logging
 import os
+import pyperclip
+import send2trash
 import socket
 import sys
+import webbrowser
 import threading
 import time
 import tomllib
 from datetime import datetime
 from pathlib import Path
-
-import pyperclip
 from PIL import Image
 from pystray import Icon, MenuItem, Menu
 
 logger = logging.getLogger(__name__)
 
-__version__ = "1.0.9"  # Major.Minor.Patch
+__version__ = "1.0.10"  # Major.Minor.Patch
 
 exit_event = threading.Event()
 
 CONFIG = {}
-
-
-def read_toml(file_path: Path | str) -> dict:
-    """
-    Reads a TOML file and returns its contents as a dictionary.
-
-    Args:
-        file_path (Path | str): The file path of the TOML file to read.
-
-    Returns:
-        dict: The contents of the TOML file as a dictionary.
-
-    Raises:
-        FileNotFoundError: If the TOML file does not exist.
-        OSError: If the file cannot be read.
-        tomllib.TOMLDecodeError (or toml.TomlDecodeError): If the file is invalid TOML.
-    """
-    path = Path(file_path)
-
-    if not path.is_file():
-        raise FileNotFoundError(f"File not found: {json.dumps(str(path))}")
-
-    try:
-        # Read TOML as bytes
-        with path.open("rb") as f:
-            data = tomllib.load(f)  # Replace with "toml.load(f)" if using the toml package
-        return data
-
-    except (OSError, tomllib.TOMLDecodeError):
-        logger.exception(f"Failed to read TOML file: {json.dumps(str(file_path))}")
-        raise
-
-
-def trim_whitespaces(text: str, unwanted_characters: list) -> str:
-    """
-    Trim leading and trailing characters. When `unwanted_characters` is falsy,
-    use str.strip() to remove all Unicode whitespace.
-    """
-    # Fast path: empty text
-    if not text:
-        return text
-
-    # Trim from the left with emptiness guard
-    while text and text[0] in unwanted_characters:
-        text = text[1:]
-
-    # Trim from the right with emptiness guard
-    while text and text[-1] in unwanted_characters:
-        text = text[:-1]
-
-    return text
 
 
 def load_image(path: str | Path) -> Image.Image:
@@ -89,9 +39,14 @@ def load_image(path: str | Path) -> Image.Image:
     return image
 
 
-# def open_source_url(icon, item):
-#     webbrowser.open("https://github.com/RandomGgames/Window-Centerer")
-#     logger.debug("Opened source URL.")
+def open_source_url():
+    webbrowser.open("https://github.com/RandomGgames/clipboard_whitespace_trimmer.py")
+    logger.debug("Opened source URL.")
+
+
+def open_issues_url():
+    webbrowser.open("https://github.com/RandomGgames/clipboard_whitespace_trimmer.py/issues")
+    logger.debug("Opened issues URL.")
 
 
 def open_script_folder():
@@ -113,7 +68,9 @@ def startup_tray_icon():
     image = load_image("system_tray_icon.png")
     menu = Menu(
         # MenuItem("Source", open_source_url),
-        MenuItem("Open Folder", open_script_folder),
+        MenuItem("Open File Path", open_script_folder),
+        MenuItem("Source", open_source_url),
+        MenuItem("Issues", open_issues_url),
         MenuItem("Exit", on_exit)
     )
     icon = Icon("CenterWindowScript", image, menu=menu)
@@ -125,87 +82,59 @@ def main():
     system_tray_thread = threading.Thread(target=startup_tray_icon, daemon=True)
     system_tray_thread.start()
 
-    unwanted_characters = CONFIG.get("unwanted_characters", [])
+    unwanted_characters = CONFIG.get("unwanted_characters", ["\n", "\t", " ", "\r"])
     logger.debug(f"Unwanted characters: {unwanted_characters}")
+    unwanted_characters = "".join(unwanted_characters)
+    logger.debug(f"{unwanted_characters=}")
 
     previous_clipboard_text = None
-
     while not exit_event.is_set():
         try:
             current_clipboard_text = pyperclip.paste()
 
-            if not current_clipboard_text:
-                time.sleep(0.1)
-                continue
+            if current_clipboard_text != previous_clipboard_text:
+                logger.debug("Clipboard update detected...")
 
-            if current_clipboard_text == previous_clipboard_text:
-                time.sleep(0.1)
-                continue
+                logger.debug("Detecting unwanted characters...")
+                cleaned_clipboard = current_clipboard_text.strip(unwanted_characters)
 
-            if (current_clipboard_text[0] in unwanted_characters or current_clipboard_text[-1] in unwanted_characters):
-                logger.debug("Unwanted chracters detected in clipboard text...")
-                cleaned_text = trim_whitespaces(current_clipboard_text, unwanted_characters)
-                pyperclip.copy(cleaned_text)
-                logger.debug("Clipboard updated.")
-                previous_clipboard_text = cleaned_text
+                if cleaned_clipboard != current_clipboard_text:
+                    logger.debug("Detected unwanted characters in clipboard...")
+                    pyperclip.copy(cleaned_clipboard)
+                    logger.info("Clipboard updated with trimmed version.")
+                    previous_clipboard_text = cleaned_clipboard
+                else:
+                    logger.info("No unwanted leading/trailing characters detected.")
+                    previous_clipboard_text = current_clipboard_text
 
         except pyperclip.PyperclipException:
             logger.exception("Clipboard access error")
         except Exception:
             logger.exception("An unknown error occurred")
 
-        time.sleep(0.1)
+        time.sleep(1)
 
-    logger.info("Exit event received. Shutting down main loop.")
-
-
-def format_duration_long(duration_seconds: float) -> str:
-    """
-    Format duration in a human-friendly way, showing only the two largest non-zero units.
-    For durations >= 1s, do not show microseconds or nanoseconds.
-    For durations >= 1m, do not show milliseconds.
-    """
-    ns = int(duration_seconds * 1_000_000_000)
-    units = [
-        ("y", 365 * 24 * 60 * 60 * 1_000_000_000),
-        ("mo", 30 * 24 * 60 * 60 * 1_000_000_000),
-        ("d", 24 * 60 * 60 * 1_000_000_000),
-        ("h", 60 * 60 * 1_000_000_000),
-        ("m", 60 * 1_000_000_000),
-        ("s", 1_000_000_000),
-        ("ms", 1_000_000),
-        ("us", 1_000),
-        ("ns", 1),
-    ]
-    parts = []
-    for name, factor in units:
-        value, ns = divmod(ns, factor)
-        if value:
-            parts.append(f"{value}{name}")
-        if len(parts) == 2:
-            break
-    if not parts:
-        return "0s"
-    return "".join(parts)
+    logger.info("Exit event detected. Shutting down main loop.")
 
 
 def enforce_max_log_count(dir_path: Path | str, max_count: int | None, script_name: str) -> None:
-    """Keep only the N most recent logs for this script."""
+    """
+    Keep only the N most recent logs for this script.
+
+    Args:
+        dir_path (Path | str): The directory path to the log files.
+        max_count (int | None): The maximum number of log files to keep. None for no limit.
+        script_name (str): The name of the script to filter logs by.
+    """
     if max_count is None or max_count <= 0:
         return
-
     dir_path = Path(dir_path)
-
-    # Get all logs for this script, sorted by name (which is our timestamp)
-    # Newest will be at the end of the list
-    files = sorted([f for f in dir_path.glob(f"*{script_name}*.log") if f.is_file()])
-
-    # If we have more than the limit, calculate how many to delete
+    files = sorted([f for f in dir_path.glob(f"*{script_name}*.log") if f.is_file()])  # Newest will be at the end of the list
     if len(files) > max_count:
         to_delete = files[:-max_count]  # Everything except the last N files
         for f in to_delete:
             try:
-                f.unlink()
+                send2trash.send2trash(f)
                 logger.debug(f"Deleted old log: {f.name}")
             except OSError as e:
                 logger.error(f"Failed to delete {f.name}: {e}")
@@ -259,6 +188,37 @@ def setup_logging(
         enforce_max_log_count(dir_path, max_log_files, script_name)
 
 
+def read_toml(file_path: Path | str) -> dict:
+    """
+    Reads a TOML file and returns its contents as a dictionary.
+
+    Args:
+        file_path (Path | str): The file path of the TOML file to read.
+
+    Returns:
+        dict: The contents of the TOML file as a dictionary.
+
+    Raises:
+        FileNotFoundError: If the TOML file does not exist.
+        OSError: If the file cannot be read.
+        tomllib.TOMLDecodeError (or toml.TomlDecodeError): If the file is invalid TOML.
+    """
+    path = Path(file_path)
+
+    if not path.is_file():
+        raise FileNotFoundError(f"File not found: {json.dumps(str(path))}")
+
+    try:
+        # Read TOML as bytes
+        with path.open("rb") as f:
+            data = tomllib.load(f)  # Replace with 'toml.load(f)' if using the toml package
+        return data
+
+    except (OSError, tomllib.TOMLDecodeError):
+        logger.exception(f"Failed to read TOML file: {json.dumps(str(file_path))}")
+        raise
+
+
 def load_config(file_path: Path | str) -> dict:
     """
     Load configuration from a TOML file.
@@ -283,30 +243,20 @@ def bootstrap():
     """
     exit_code = 0
     try:
-        # Resolve paths and configuration
         script_path = Path(__file__)
         script_name = script_path.stem
-        config_path = script_path.with_name(f"{script_name}_config.toml")
+        pc_name = socket.gethostname()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        # Load settings
+        config_path = script_path.with_name(f"{script_name}_config.toml")
         global CONFIG
         CONFIG = load_config(config_path)
         logger_config = CONFIG.get("logging", {})
-
-        # Parse log levels and formats
         console_log_level = getattr(logging, logger_config.get("console_logging_level", "INFO").upper(), logging.INFO)
         file_log_level = getattr(logging, logger_config.get("file_logging_level", "INFO").upper(), logging.INFO)
         log_message_format = logger_config.get("log_message_format", "%(asctime)s.%(msecs)03d %(levelname)s [%(funcName)s] - %(message)s")
-
-        # Setup directories and filenames
         logs_folder = Path(logger_config.get("logs_folder_name", "logs"))
-        logs_folder.mkdir(parents=True, exist_ok=True)
-
-        pc_name = socket.gethostname()
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_path = logs_folder / f"{timestamp}__{script_name}__{pc_name}.log"
-
-        # Initialize logging
         setup_logging(
             logger_obj=logger,
             file_path=log_path,
@@ -322,14 +272,14 @@ def bootstrap():
         pause_before_exit_on_error = exit_behavior_config.get("pause_on_error", True)
 
         logger.info(f"Script: {json.dumps(script_name)} | Version: {__version__} | Host: {json.dumps(pc_name)}")
-
         main()
+        logger.info("Execution completed.")
 
     except KeyboardInterrupt:
         logger.warning("Operation interrupted by user.")
         exit_code = 130
     except Exception as e:  # pylint: disable=broad-exception-caught
-        # Using "err" or "exc" is standard; logging the traceback handles the "broad-except"
+        # Using 'err' or 'exc' is standard; logging the traceback handles the 'broad-except'
         logger.error(f"A fatal error has occurred: {e}")
         exit_code = 1
     finally:
