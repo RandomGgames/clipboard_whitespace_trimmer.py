@@ -14,10 +14,10 @@ import pyperclip
 import send2trash
 import socket
 import sys
-import webbrowser
 import threading
 import time
 import tomllib
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 from PIL import Image
@@ -25,9 +25,11 @@ from pystray import Icon, MenuItem, Menu
 
 logger = logging.getLogger(__name__)
 
-__version__ = "1.0.10"  # Major.Minor.Patch
+__version__ = "1.0.11"  # Major.Minor.Patch
 
 exit_event = threading.Event()
+running_event = threading.Event()
+running_event.set()
 
 CONFIG = {}
 
@@ -55,6 +57,23 @@ def open_script_folder():
     logger.debug(f"Opened script folder: {json.dumps(str(folder_path))}")
 
 
+def toggle_pause(icon):
+    """Toggle pause state."""
+    if running_event.is_set():
+        running_event.clear()
+        logger.info("Paused clipboard monitor.")
+    else:
+        running_event.set()
+        logger.info("Resumed clipboard monitor.")
+
+    icon.update_menu()
+
+
+def pause_checked(_):
+    """Return True when paused."""
+    return not running_event.is_set()
+
+
 def on_exit(icon):
     logger.debug("Exit pressed on system tray icon")
     icon.stop()
@@ -65,15 +84,23 @@ def on_exit(icon):
 
 def startup_tray_icon():
     logger.debug("Starting up system tray icon...")
+
     image = load_image("system_tray_icon.png")
+
     menu = Menu(
-        # MenuItem("Source", open_source_url),
+        MenuItem(f"Clipboard Whitespace Trimmer v{__version__}", None, enabled=False),
+        Menu.SEPARATOR,
+        MenuItem("Pause Clipboard Monitor", toggle_pause, checked=pause_checked),
+        Menu.SEPARATOR,
+        MenuItem("Source Page", open_source_url),
+        MenuItem("Issues Page", open_issues_url),
         MenuItem("Open File Path", open_script_folder),
-        MenuItem("Source", open_source_url),
-        MenuItem("Issues", open_issues_url),
-        MenuItem("Exit", on_exit)
+        Menu.SEPARATOR,
+        MenuItem("Exit", on_exit),
     )
-    icon = Icon("CenterWindowScript", image, menu=menu)
+
+    icon = Icon("Clipboard Whitespace Trimmer", image, menu=menu)
+
     logger.debug("Started system tray icon.")
     icon.run()
 
@@ -89,6 +116,8 @@ def main():
 
     previous_clipboard_text = None
     while not exit_event.is_set():
+        running_event.wait()
+
         try:
             current_clipboard_text = pyperclip.paste()
 
@@ -106,7 +135,6 @@ def main():
                 else:
                     logger.info("No unwanted leading/trailing characters detected.")
                     previous_clipboard_text = current_clipboard_text
-
         except pyperclip.PyperclipException:
             logger.exception("Clipboard access error")
         except Exception:
@@ -273,7 +301,6 @@ def bootstrap():
 
         logger.info(f"Script: {json.dumps(script_name)} | Version: {__version__} | Host: {json.dumps(pc_name)}")
         main()
-        logger.info("Execution completed.")
 
     except KeyboardInterrupt:
         logger.warning("Operation interrupted by user.")
@@ -283,6 +310,7 @@ def bootstrap():
         logger.error(f"A fatal error has occurred: {e}")
         exit_code = 1
     finally:
+        logger.info("Closing loggers and existing.")
         for handler in logger.handlers[:]:
             handler.close()
             logger.removeHandler(handler)
