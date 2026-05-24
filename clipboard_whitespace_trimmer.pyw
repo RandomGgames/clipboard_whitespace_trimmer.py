@@ -305,8 +305,7 @@ def bootstrap():
     except KeyboardInterrupt:
         logger.warning("Operation interrupted by user.")
         exit_code = 130
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        # Using 'err' or 'exc' is standard; logging the traceback handles the 'broad-except'
+    except Exception as e:
         logger.error(f"A fatal error has occurred: {e}")
         exit_code = 1
     finally:
